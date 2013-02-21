@@ -1,0 +1,27 @@
+Used IO pins
+
+PB0		LED			(RoboCard LED)
+PB1		Encoder left B		(OC1A) 			Purple
+PB2		Motor right D 		(OC1B/SS) 
+PB3		Motor right C		(OC2A/MOSI) 
+PB4		Encoder left A		(MISO, INT4) 		Blue
+PB5		Motor left D		(SCK)
+PB6		OSC
+PB7		OSC
+
+PC0		Voltage measurement	(ADC0)
+PC1		-			(ADC1)
+PC2		-			(ADC2)
+PC3		20ms toggle		(ADC3)
+PC4		Encoder right A		(ADC4, INT12)		Blue
+PC5		Encoder right B		(ADC5)			Purple
+PC6		RESET
+
+PD0		RXD
+PD1		TXD
+PD2		RoboCard USB D+ 	(INT0)
+PD3		Motor left C 		(OC2B/INT1)
+PD4		RoboCard USB D-		(T0)
+PD5		Motor right EN 		(OC0B)
+PD6		Motor left EN 		(OC0A)
+PD7		RoboCard BL
