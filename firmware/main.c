@@ -234,26 +234,38 @@ void nmea_rx_parse(void)
 		if (rx_ite != -1)
 			nmea_wd_timeout = nmea_rx_next_val();
 	}
-	else if (rx[3] == 'W' && rx[4] == 'H') /* parameters */
+	else if (rx[3] == 'W' && rx[4] == 'P') /* parameters */
 	{
 		rx_ite = 5; /* jump to first value */
 		pid_enable = nmea_rx_next_val();
 		if (pid_enable == TRUE)
 		{ 
-			long Kp, Ki, Kd;
+			long Kp_l, Ki_l, Kd_l, Kp_r, Ki_r, Kd_r;
 			pid_interval = nmea_rx_next_val();
 			pid_rate = 1000/pid_interval; /* always remember after setting pid_interval */
 			if (rx_ite != -1)
 			{
-				Kp = nmea_rx_next_val();
+				Kp_l = nmea_rx_next_val();
 				if (rx_ite != -1)
 				{
-					Ki = nmea_rx_next_val();
+					Ki_l = nmea_rx_next_val();
 					if (rx_ite != -1)
 					{
-						Kd = nmea_rx_next_val();
-						motor_set_param (WHEEL_LEFT, pid_interval, Kp, Ki, Kd);
-						motor_set_param (WHEEL_RIGHT, pid_interval, Kp, Ki, Kd);
+						Kd_l = nmea_rx_next_val();
+						if (rx_ite != -1)
+						{
+							Kp_r = nmea_rx_next_val();
+							if (rx_ite != -1)
+							{
+								Ki_r = nmea_rx_next_val();
+								if (rx_ite != -1)
+								{
+									Kd_r = nmea_rx_next_val();
+									motor_set_param (WHEEL_LEFT, pid_interval, Kp_l, Ki_l, Kd_l);
+									motor_set_param (WHEEL_RIGHT, pid_interval, Kp_r, Ki_r, Kd_r);
+								}
+							}
+						}
 					}
 				}
 			}
