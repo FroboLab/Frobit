@@ -303,7 +303,7 @@ void sched_update (void)
 	if (t1ms_cnt == 10000)
 		t1ms_cnt = 0;
 	
-	if (pid_enable && t1ms_cnt % pid_interval == 0) /* motor controller update */
+	if (t1ms_cnt % pid_interval == 0) /* motor controller update */
 	{
 		if (pid_enable)
 			wheel_update_pid(); /* update PID motor controller */
