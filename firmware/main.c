@@ -59,7 +59,7 @@
 #define STATE_WATCHDOG			3 /* no validated nmea packets received for the past 0.2 seconds */
 #define STATE_LOWBAT			4 /* battery voltage too low */
 
-#define VOLTAGE_MIN			682 /* minimum voltage */
+#define VOLTAGE_MIN_DEFAULT		682 /* minimum voltage */
 
 /* signal led defines */
 #define LED_STATE_OFF			0
@@ -95,12 +95,14 @@ unsigned short nmea_wd; /* NMEA watchdog counter */
 unsigned short pfbst_interval; /* PFBST interval (20-10000) [ms] */
 short nmea_ticks_l, nmea_ticks_r;
 
-/* adc variables (8 bit [0;255]) */
-volatile unsigned short adc_data[ADC_NUM]; /* adc data variables */
+/* ADC variables (10 bit [0;1023]) */
+volatile unsigned short adc_data[ADC_NUM]; /* ADC data variables */
 volatile unsigned char adc_ch; /* current adc channel */
 unsigned char adc_ports[ADC_NUM]; /* maps to ADC ports */
 
 unsigned short voltage;
+unsigned short voltage_min;
+unsigned char battery_low_warning;
 
 /* wheel variables */
 extern char pid_enable;
@@ -147,6 +149,17 @@ void adc_init (void)
 	ADCSRA |= BV(ADIE); /* interrupt enable */
 	ADMUX = adc_ports[adc_ch]; /* Voltage reference is AREF) */
 	ADCSRA |= BV(ADSC); /* request ADC conversion */
+}
+/***************************************************************************/
+void voltage_update(void)
+{
+	if (spd_set_l == 0 && spd_set_r == 0) /* only test when standing still */
+	{
+		if (battery_low_warning == false && voltage < voltage_min)
+			battery_low_warning = true;
+		else if (battery_low_warning == true && voltage >= voltage_min)
+			battery_low_warning = false;
+	}
 }
 /***************************************************************************/
 void led_update(void)
@@ -227,14 +240,19 @@ void nmea_rx_parse(void)
 		if (rx_ite != -1)
 			spd_set_r = nmea_rx_next_val()/pid_rate;
 	}
-	else if (rx[3] == 'C' && rx[4] == 'O') /* parameters */
+	else if (rx[3] == 'C' && rx[4] == 'P') /* Communication Parameters */
 	{
 		rx_ite = 5; /* jump to first value */
 		pfbst_interval = nmea_rx_next_val();
 		if (rx_ite != -1)
 			nmea_wd_timeout = nmea_rx_next_val();
 	}
-	else if (rx[3] == 'W' && rx[4] == 'P') /* parameters */
+	else if (rx[3] == 'S' && rx[4] == 'P') /* System Parameters */
+	{
+		rx_ite = 5; /* jump to first value */
+		voltage_min = nmea_rx_next_val();
+	}
+	else if (rx[3] == 'W' && rx[4] == 'P') /* Wheel Parameters */
 	{
 		rx_ite = 5; /* jump to first value */
 		pid_enable = nmea_rx_next_val();
@@ -285,16 +303,14 @@ void nmea_tx_status(void)
 	nmea_ticks_r = 0;
 	nmea_tx_append_short (ticks_l);
 	nmea_tx_append_short (ticks_r);
-	nmea_tx_append_short (pid_rate);
-	nmea_tx_append_short (spd_set_r);
-	nmea_tx_append_ushort (voltage); /* battery voltage 10-16V */
+	nmea_tx_append_ushort (voltage); /* battery voltage [0;1023] */
 	tx_len--; /* delete the last comma */
 	nmea_tx();
 }
 /***************************************************************************/
 void state_update(void)
 {
-	if (voltage < VOLTAGE_MIN)
+	if (battery_low_warning == true)
 		state = STATE_LOWBAT;
 	else if (nmea_wd > NMEA_WD_TOUT)
 		state = STATE_WATCHDOG; 
@@ -352,6 +368,7 @@ void sched_update (void)
 		{
 			button_update();		
 			led_update();
+			voltage_update();
 		}
 	}
 }
@@ -371,6 +388,8 @@ int main(void)
 	pfbst_interval = 100; /* send $PFBST at 100 ms interval */
 	nmea_wd_timeout = 1; /* set PFBCT watchdog timeout to 100ms */
 	nmea_wd = NMEA_WD_TOUT+1; /* make sure we begin in watchdog timeout state */
+	voltage_min = VOLTAGE_MIN_DEFAULT;
+	battery_low_warning = false;
 	state_update();
 
 	sei(); /* enable interrupts */
