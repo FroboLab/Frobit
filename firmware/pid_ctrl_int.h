@@ -1,6 +1,6 @@
 /****************************************************************************
 # PID controller
-# Copyright (c) 2007-2013, Kjeld Jensen <kj@kjen.dk>
+# Copyright (c) 2007-2014, Kjeld Jensen <kj@kjen.dk>
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -10,9 +10,9 @@
 #    * Redistributions in binary form must reproduce the above copyright
 #      notice, this list of conditions and the following disclaimer in the
 #      documentation and/or other materials provided with the distribution.
-#    * Neither the name RoboCard nor the
-#      names of its contributors may be used to endorse or promote products
-#      derived from this software without specific prior written permission.
+#    * Neither the name of the copyright holder nor the names of its
+#      contributors may be used to endorse or promote products derived from
+#      this software without specific prior written permission.
 #
 # THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
 # ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
@@ -25,35 +25,18 @@
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 # SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 *****************************************************************************
-# File: pid_ctrl.h
+# File: pid_ctrl_int.h
 # Author: Kjeld Jensen <kj@kjen.dk>
 # Created:  2007-03-21
 # Modified: 2013-02-12 Kjeld Jensen, updated algorithm, added integer version, added BSD license.
+# Modified: 2013-11-17 KJ, fixed I and D bug in integer version.
+# Modified: 2014-04-17 Kjeld Jensen, removed floating point version and added #ifndef
 ****************************************************************************/
 
-/* PID data record */
-typedef struct
-{
-	/* initialization parameters */
-	double Kp; /* proportional gain */
-	double Ki; /* integrational gain */
-	double Kd; /* deriative gain */
-	double dT; /* time interval [ms] */
-	double integral_min; /* minimum integral */
-	double integral_max; /* maximum integral */
-	/* update input */
-	double setpoint; /* setpoint */
-	double measured; /* measured value */
-	/* internal vars */
-	double error;
-	double error_prev; /* error previous step */
-	double integral;
-	double derivative; 
-	/* update output */
-	double output; /* controller output */
-} pid_t;
+#ifndef _PID_CTRL_INT_H
+#define _PID_CTRL_INT_H
 
-/* PID data record (integer version) */
+/* PID data record */
 typedef struct
 {
 	/* initialization parameters */
@@ -61,7 +44,6 @@ typedef struct
 	long Ki; /* integrational gain */
 	long Kd; /* deriative gain */
 	long dT; /* time interval [ms] */
-	long integral_min; /* minimum integral */
 	long integral_max; /* maximum integral */
 	/* update input */
 	long setpoint; /* setpoint */
@@ -70,17 +52,21 @@ typedef struct
 	long error;
 	long error_prev; /* error previous step */
 	long integral;
-	long derivative; 
+	long integral_factor;
+	long integral_state;
+	long derivative;
+	long derivative_factor;
+	long output_p;
+	long output_i;
+	long output_d;
 	/* update output */
 	long output; /* controller output */
 } pid_int_t;
 
 /***************************************************************************/
 /* function prototypes */
-void pid_init (pid_t *pid);
-void pid_update (pid_t *pid);
-
 void pid_int_init (pid_int_t *pid);
 void pid_int_update (pid_int_t *pid);
 
+#endif 
 /***************************************************************************/

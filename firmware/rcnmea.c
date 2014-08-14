@@ -10,9 +10,9 @@
 #    * Redistributions in binary form must reproduce the above copyright
 #      notice, this list of conditions and the following disclaimer in the
 #      documentation and/or other materials provided with the distribution.
-#    * Neither the name RoboCard nor the
-#      names of its contributors may be used to endorse or promote products
-#      derived from this software without specific prior written permission.
+#    * Neither the name of the copyright holder nor the names of its
+#      contributors may be used to endorse or promote products derived from
+#      this software without specific prior written permission.
 #
 # THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
 # ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
@@ -33,11 +33,12 @@
 # Created:  2012-08-29 Kjeld Jensen
 # Modified: 2012-12-13 Kjeld Jensen, renamed nmea_tx_append() and added nmea_tx_append_ushort()
 # Modified: 2013-02-04 Kjeld Jensen, moved to the BSD license
+# Modified: 2014-04-17 Kjeld Jensen, switched to an updated serial driver
 ****************************************************************************/
 /* includes */
 
 #include <stdlib.h>
-#include "rcserial.h"
+#include "avr_serial.h"
 #include "rcnmea.h"
 /***************************************************************************/
 /* global and static variables */

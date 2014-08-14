@@ -1,6 +1,6 @@
 #############################################################################
 # Frobit RoboCard firmware
-# Copyright (c) 2012-2013, Kjeld Jensen <kjeld@frobomind.org>
+# Copyright (c) 2012-2014, Kjeld Jensen <kjeld@frobomind.org>
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -10,9 +10,9 @@
 #    * Redistributions in binary form must reproduce the above copyright
 #      notice, this list of conditions and the following disclaimer in the
 #      documentation and/or other materials provided with the distribution.
-#    * Neither the name FroboMind nor the
-#      names of its contributors may be used to endorse or promote products
-#      derived from this software without specific prior written permission.
+#    * Neither the name of the copyright holder nor the names of its
+#      contributors may be used to endorse or promote products derived from
+#      this software without specific prior written permission.
 #
 # THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
 # ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
@@ -32,17 +32,18 @@
 # Author: Kjeld Jensen <kjeld@frobomind.org>
 # Created:  2012-08-14
 # Modified: 2013-02-12 Kjeld Jensen, added wheel.c, pid_ctrl.c and migrated to the BSD license
+# Modified: 2014-04-17 Kjeld Jensen, updated serial driver to avr_serial.c
+#                                    pid_ctrl.c is now pid_ctrl_int.c
 #############################################################################
 
 PROJECT=main
-SOURCES=main.c wheel.c pid_ctrl.c rcserial.c rcnmea.c
+SOURCES=main.c wheel.c pid_ctrl_int.c avr_serial.c rcnmea.c
 MMCU=atmega168
 CC=avr-gcc
-AVRDUDE=avrdude -p m168p -c avrisp2 -P /dev/ttyUSB1
-#AVRDUDE=avrdude -p m168p -c avrisp2 -P /dev/tty.PL2303-00001004
+AVRDUDE=avrdude -p m168p -c avrisp2 -P /dev/ttyUSB0
 #AVRDUDE=avrdude -p m168p -c usbasp 
 
-# Der er en M168 i istedet
+# The fuse options below are for a m328
 #M328FUSEOPT=-U hfuse:w:0xd9:m -U lfuse:w:0xee:m -U efuse:w:0x07:m
 
 CFLAGS= -mmcu=$(MMCU) -Wall -Os -pedantic -Wall

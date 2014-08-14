@@ -1,6 +1,6 @@
 /****************************************************************************
 # Frobit RoboCard interface
-# Copyright (c) 2012-2013, Kjeld Jensen <kjeld@frobomind.org>
+# Copyright (c) 2012-2014, Kjeld Jensen <kjeld@frobomind.org>
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -10,9 +10,9 @@
 #    * Redistributions in binary form must reproduce the above copyright
 #      notice, this list of conditions and the following disclaimer in the
 #      documentation and/or other materials provided with the distribution.
-#    * Neither the name FroboMind nor the
-#      names of its contributors may be used to endorse or promote products
-#      derived from this software without specific prior written permission.
+#    * Neither the name of the copyright holder nor the names of its
+#      contributors may be used to endorse or promote products derived from
+#      this software without specific prior written permission.
 #
 # THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
 # ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
@@ -32,16 +32,19 @@
 # Author: Kjeld Jensen <kjeld@frobomind.org>
 # Created:  2012-08-15 Kjeld Jensen
 # Modified: 2013-02-04 Kjeld Jensen, Migrated to the BSD license
+# Modified: 2014-04-17 Kjeld Jensen, FrobitV2 updates
 ****************************************************************************/
 /* includes */
 #include <avr/interrupt.h>
 #include "wheel.h"
 #include "rcdef.h"
-#include "pid_ctrl.h"
+#include "pid_ctrl_int.h"
 
 /***************************************************************************/
 /* defines */
 #define STATE_NO_ERR		2 /* maximum system state value before shutting down motors */
+
+#define M_PWM_MAX			255 /* 8 bit PWM */
 
 /* Motor defines (left) */
 #define M_L_PWM			OCR0A /* OC0A is 8 bit */
@@ -69,17 +72,18 @@
 #define M_R_D_PORT		PORTB							
 #define M_R_D_DDR		DDRB							
 
-/* Encoder defines (left) */
+/* Encoder defines */
 #define ENC_L_A			PB4 /* int4 */
-#define ENC_L_A_PORT		PINB
+#define ENC_L_A_PORT	PINB
 #define ENC_L_B			PB1
-#define ENC_L_B_PORT		PINB
+#define ENC_L_B_PORT	PINB
 
-/* Encoder defines (right) */
 #define ENC_R_A			PC4 /* int12 */
-#define ENC_R_A_PORT		PINC
+#define ENC_R_A_PORT	PINC
 #define ENC_R_B			PC5
-#define ENC_R_B_PORT		PINC
+#define ENC_R_B_PORT	PINC
+
+#define TICKS_BUF_LEN	10
 
 /* PID control */
 
@@ -92,19 +96,22 @@ extern char state;
 
 /* actuator variables */
 unsigned char set_cmd;
-short spd_set_l;
-short spd_set_r;
-short prop_set_l;
-short prop_set_r;
+short vel_set_l, vel_set_r; /* [ticks/s] */
+long prop_l, prop_r;
+short pwm_l, pwm_r;
 
 /* PID variables */
 char pid_enable;
+short pid_rate; /* [Hz] */
 short pid_interval; /* 1-1000 [ms] */
 pid_int_t pid_l, pid_r;
+static long feed_forward;
 
 /* status variables */
-volatile short pid_ticks_l, nmea_ticks_l;
-volatile short pid_ticks_r, nmea_ticks_r;
+volatile long ticks_l, ticks_r;
+static long pid_ticks_l, pid_ticks_r;
+static short ticks_l_buf[TICKS_BUF_LEN];
+static short ticks_r_buf[TICKS_BUF_LEN];
 
 /***************************************************************************/
 void encoder_init(void)
@@ -122,7 +129,9 @@ void encoder_init(void)
 	PB_PULL_UP (ENC_R_B_PORT, ENC_R_B);
 
 	/* reset variables */
+	ticks_l = 0;
 	pid_ticks_l = 0;
+	ticks_r = 0;
 	pid_ticks_r = 0;
 }
 /***************************************************************************/
@@ -131,28 +140,16 @@ ISR (PCINT0_vect)
 	if (ENC_L_A_PORT & (1<<ENC_L_A)) /* if ch A is high */
 	{
 		if (ENC_L_B_PORT & (1<<ENC_L_B)) /* if ch B is high */
-		{		
-			pid_ticks_l++;
-			nmea_ticks_l++;
-		}
+			ticks_l++;
 		else /* if ch B is low */
-		{
-			pid_ticks_l--;
-			nmea_ticks_l--;
-		}
+			ticks_l--;
 	}
 	else /* if ch A is low */
 	{
 		if (ENC_L_B_PORT & (1<<ENC_L_B)) /* if ch B is high */
-		{
-			pid_ticks_l--;
-			nmea_ticks_l--;
-		}
+			ticks_l--;
 		else /* if ch B is low */
-		{
-			pid_ticks_l++;
-			nmea_ticks_l++;
-		}
+			ticks_l++;
 	}
 }
 /***************************************************************************/
@@ -161,48 +158,40 @@ ISR (PCINT1_vect)
 	if (ENC_R_A_PORT & (1<<ENC_R_A)) /* if ch A is high */
 	{
 		if (ENC_R_B_PORT & (1<<ENC_R_B)) /* if ch B is high */
-		{
-			pid_ticks_r--;
-			nmea_ticks_r--;
-		}
+			ticks_r--;
 		else /* if ch B is low */
-		{
-			pid_ticks_r++;
-			nmea_ticks_r++;
-		}	
+			ticks_r++;
 	}
 	else /* if ch A is low */
 	{
 		if (ENC_R_B_PORT & (1<<ENC_R_B)) /* if ch B is high */
-		{
-			pid_ticks_r++;
-			nmea_ticks_r++;
-		}
+			ticks_r++;
 		else /* if ch B is low */
-		{
-			pid_ticks_r--;
-			nmea_ticks_r--;
-		}
+			ticks_r--;
 	}
 }
 /***************************************************************************/
-void motor_set_param(char wheel, long dT, long Kp, long Ki, long Kd)
+void motor_set_param(long dT, long Kp, long Ki, long Kd, long i_max, long feed_fwd)
 {
-	switch (wheel)
-	{
-		case WHEEL_LEFT:
-			pid_l.dT = dT;
-			pid_l.Kp = Kp;
-			pid_l.Ki = Ki;
-			pid_l.Kd = Kd;
-			break;
-		case WHEEL_RIGHT:	
-			pid_r.dT = dT;
-			pid_r.Kp = Kp;
-			pid_r.Ki = Ki;
-			pid_r.Kd = Kd;
-			break;
-	}
+	feed_forward = feed_fwd;
+
+	pid_l.dT = dT;
+	pid_l.Kp = Kp;
+	pid_l.Ki = Ki;
+	pid_l.Kd = Kd;
+	pid_l.integral_max = i_max;
+	pid_l.integral_factor = 10000;
+	pid_l.derivative_factor = 100;
+	pid_int_init (&pid_l); /* initialize PID controller (left) */
+
+	pid_r.dT = dT;
+	pid_r.Kp = Kp;
+	pid_r.Ki = Ki;
+	pid_r.Kd = Kd;
+	pid_r.integral_max = i_max;
+	pid_r.integral_factor = 10000;
+	pid_r.derivative_factor = 100;
+	pid_int_init (&pid_r); /* initialize PID controller (right) */
 }
 /***************************************************************************/
 void motor_init(void)
@@ -215,14 +204,14 @@ void motor_init(void)
 	PB_OUT (M_L_D_DDR, M_L_D); /* set pin connected to L298 in4 as output */
 	PB_OUT (M_L_DDR, M_L); /* set pin connected to L298 Enable B (PWM 0A) as output */
 	M_L_PWM_OFF;
-	prop_set_l = 0;
+	pwm_l = 0;
 
 	/* right motor */
 	PB_OUT (M_R_C_DDR, M_R_C); /* set pin connected to L298 in1 as output */
 	PB_OUT (M_R_D_DDR, M_R_D); /* set pin connected to L298 in2 as output */
 	PB_OUT (M_R_DDR, M_R); /* set pin connected to L298 Enable A (PWM 0B) as output */
 	M_R_PWM_OFF;
-	prop_set_r = 0;
+	pwm_r = 0;
 }
 /***************************************************************************/
 void wheel_init (void)
@@ -231,95 +220,152 @@ void wheel_init (void)
 
 	encoder_init(); /* initialize tacho encoders */
 	motor_init(); /* initialize PWM */
-
-	motor_set_param (WHEEL_LEFT, pid_interval*10, 1, 0, 0); /* dT=100ms, Kp=1 Ki=0, Kd=0 */
-	pid_int_init (&pid_l); /* initialize PID controller (left) */
-
-	motor_set_param (WHEEL_RIGHT, pid_interval*10, 1, 0, 0); /* dT=100ms, Kp=1 Ki=0, Kd=0 */
-	pid_int_init (&pid_r); /* initialize PID controller (right) */
 }
 /***************************************************************************/
 static void motor_update (void)
 {
 	if (state <= STATE_NO_ERR)
 	{
-		if (prop_set_l >= 0) 
+		if (pwm_l >= 0) 
 		{
 			PB_LOW (M_L_C_PORT, M_L_C);
 			PB_HIGH (M_L_D_PORT, M_L_D);
 			M_L_PWM_ON;
-			M_L_PWM = prop_set_l;
+			M_L_PWM = pwm_l;
 		}
 		else
 		{
 			PB_HIGH (M_L_C_PORT, M_L_C);
 			PB_LOW (M_L_D_PORT, M_L_D);
 			M_L_PWM_ON;
-			M_L_PWM = -prop_set_l;
+			M_L_PWM = -pwm_l;
 		}
 
-		if (prop_set_r >= 0) 
+		if (pwm_r >= 0) 
 		{
 			PB_HIGH (M_R_C_PORT, M_R_C);
 			PB_LOW (M_R_D_PORT, M_R_D);
 			M_R_PWM_ON;
-			M_R_PWM = prop_set_r;
+			M_R_PWM = pwm_r;
 		}
 		else
 		{
 			PB_LOW (M_R_C_PORT, M_R_C);
 			PB_HIGH (M_R_D_PORT, M_R_D);
 			M_R_PWM_ON;
-			M_R_PWM = -prop_set_r;
+			M_R_PWM = -pwm_r;
 		} 
 	}
 	else
 	{
 		M_L_PWM_OFF;
 		M_R_PWM_OFF;
-		prop_set_l = 0;
-		prop_set_r = 0;
+		pwm_l = 0;
+		pwm_r = 0;
 	}
+}
+/***************************************************************************/
+void wheel_update_ticks_buffers (void) /* asways 50 hz */
+{
+	short i;
+
+	for (i=TICKS_BUF_LEN-1; i>0; i--)
+	{
+		ticks_l_buf[i] = ticks_l_buf[i-1];
+		ticks_r_buf[i] = ticks_r_buf[i-1];
+	}
+
+	ticks_l_buf[0] = ticks_l - pid_ticks_l;
+	pid_ticks_l = ticks_l;
+
+	ticks_r_buf[0] = ticks_r - pid_ticks_r;
+	pid_ticks_r = ticks_r;		
+}
+/***************************************************************************/
+short wheel_calc_vel (short *buf)
+{
+	short sum, ticks;
+
+	sum = buf[0]+buf[1]+ buf[2];
+	if (sum > 20 || sum < -20)
+	{
+		ticks = (15*buf[0]+10*buf[1]+5*buf[2]);
+	}
+	else
+	{
+		sum += (buf[3]+buf[4]);
+		if (sum > 20 || sum < -20)
+		{
+			ticks = (10*buf[0]+8*buf[1]+6*buf[2]+4*buf[3]+2*buf[4]);
+		}
+		else
+		{
+			ticks = (7*buf[0]+6*buf[1]+5*buf[2]+4*buf[3]+3*buf[4]+2*buf[5]+1*buf[6]+1*buf[7]+1*buf[8]);
+		}
+	}
+	return ticks;
 }
 /***************************************************************************/
 void wheel_update_pid (void)
 {
-	pid_l.setpoint = spd_set_l;  /* update PID controller (left) */
-	pid_l.measured = pid_ticks_l;
-	pid_ticks_l = 0;
-	pid_int_update (&pid_l); 
-	if (pid_l.output >= 0)
-		prop_set_l += pid_l.output;
+	if (vel_set_l != 0 && state <= STATE_NO_ERR) /* if the velocity is set to zero */
+	{
+		pid_l.setpoint = vel_set_l*30/50;
+		pid_l.measured = wheel_calc_vel(ticks_l_buf); 
+		pid_int_update (&pid_l); 
+
+		prop_l += pid_l.output/50;
+
+		if (vel_set_l > 0) 
+			pwm_l = feed_forward + prop_l;
+		else
+			pwm_l = -feed_forward + prop_l;
+		
+		if (pwm_l > M_PWM_MAX)
+			pwm_l = M_PWM_MAX;
+		else if (pwm_l <-M_PWM_MAX)
+			pwm_l = -M_PWM_MAX;
+	}
 	else
-		prop_set_l -= -pid_l.output; 
+	{
+		prop_l = 0;
+		pwm_l = 0;
+		pid_int_init (&pid_l); 		
+	}
 
-	if (prop_set_l > 255)
-		prop_set_l = 255;
-	else if (prop_set_l <-255)
-		prop_set_l = -255;
 
-	pid_r.setpoint = spd_set_r;    /* update PID controller (right) */
-	pid_r.measured = pid_ticks_r;
-	
-	pid_ticks_r = 0;
-	pid_int_update (&pid_r); 
-	if (pid_r.output >= 0) 
-		prop_set_r += pid_r.output;  
+	if (vel_set_r != 0 && state <= STATE_NO_ERR) /* if the velocity is set to zero */
+	{
+		pid_r.setpoint = vel_set_r*30/50;
+		pid_r.measured = wheel_calc_vel(ticks_r_buf); 
+		pid_int_update (&pid_r); 
+
+		prop_r += pid_r.output/50;
+
+		if (vel_set_r > 0) 
+			pwm_r = feed_forward + prop_r;
+		else
+			pwm_r = -feed_forward + prop_r;
+		
+		if (pwm_r > M_PWM_MAX)
+			pwm_r = M_PWM_MAX;
+		else if (pwm_r <-M_PWM_MAX)
+			pwm_r = -M_PWM_MAX;
+	}
 	else
-		prop_set_r -= -pid_r.output; 
-
-	if (prop_set_r > 255)
-		prop_set_r = 255;
-	else if (prop_set_r <-255)
-		prop_set_r = -255;
+	{
+		prop_r = 0;
+		pwm_r = 0;
+		pid_int_init (&pid_r); 		
+	}
 
 	motor_update(); 
 }
 /***************************************************************************/
 void wheel_update_open_loop (void)
 {
-	prop_set_l = spd_set_l; 
-	prop_set_r = spd_set_r;
+	pwm_l = vel_set_l; 
+	pwm_r = vel_set_r;
 	motor_update();
 }
 /***************************************************************************/

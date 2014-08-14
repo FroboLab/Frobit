@@ -1,6 +1,6 @@
 /****************************************************************************
 # Frobit RoboCard interface
-# Copyright (c) 2012-2013, Kjeld Jensen <kjeld@frobomind.org>
+# Copyright (c) 2012-2014, Kjeld Jensen <kjeld@frobomind.org>
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -10,9 +10,9 @@
 #    * Redistributions in binary form must reproduce the above copyright
 #      notice, this list of conditions and the following disclaimer in the
 #      documentation and/or other materials provided with the distribution.
-#    * Neither the name FroboMind nor the
-#      names of its contributors may be used to endorse or promote products
-#      derived from this software without specific prior written permission.
+#    * Neither the name of the copyright holder nor the names of its
+#      contributors may be used to endorse or promote products derived from
+#      this software without specific prior written permission.
 #
 # THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
 # ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
@@ -32,43 +32,46 @@
 # Author: Kjeld Jensen <kjeld@frobomind.org>
 # Created:  2012-08-15
 # Modified: 2013-02-04 Migrated to the BSD license
+# Modified: 2014-04-17 Kjeld Jensen, switched to an updated serial driver
 ****************************************************************************/
 /* includes */
 #include <avr/interrupt.h>
 #include <stdlib.h>
 #include "rcdef.h"
 #include "wheel.h"
-#include "rcserial.h"
+#include "avr_serial.h"
 #include "rcnmea.h"
 
 /***************************************************************************/
 /* defines */
 
-#define false				0
-#define true				1
+#define false					0
+#define true					1
 
 /* defines for the timer1 interrupt */
 #define INT1_1MS_CNT			2000 /* 1ms */
-#define FLIPBIT				PC3
+#define FLIPBIT					PC3
 #define FLIPBIT_PORT			PORTC
-#define FLIPBIT_DDR			DDRC
+#define FLIPBIT_DDR				DDRC
+
 
 /* system state (only the highest status is transmitted through NMEA) */
 #define STATE_OK			1
-#define STATE_NMEA_ERR			2 /* error occured while receiving the latest nmea packet */
-#define STATE_WATCHDOG			3 /* no validated nmea packets received for the past 0.2 seconds */
-#define STATE_LOWBAT			4 /* battery voltage too low */
+#define STATE_WARN_NMEA_CS	2 /* error occured while receiving the latest nmea packet */
+#define STATE_ERR_NO_CONFIG	3 /* no configuration received yet */
+#define STATE_ERR_WATCHDOG	4 /* no validated nmea packets received for the past 0.2 seconds */
+#define STATE_ERR_LOWBAT	5 /* battery voltage too low */
 
 #define VOLTAGE_MIN_DEFAULT		682 /* minimum voltage */
 
 /* signal led defines */
 #define LED_STATE_OFF			0
 #define LED_STATE_ON			1
-#define LED_DELAY			4 /* times the cycle */
+#define LED_DELAY				4 /* times the cycle */
 
 /* adc defines */
-#define ADC_NUM				1 /* number of used ADC's */
-#define ADC_VOLT			0 /* Voltage divider connected at ADC0 (PC0) */
+#define ADC_NUM					1 /* number of used ADC's */
+#define ADC_VOLT				0 /* Voltage divider connected at ADC0 (PC0) */
 
 /* NMEA defines */
 #define NMEA_WD_TOUT			2 /* 1/10 [s] without receiving ok NMEA before timeout */
@@ -90,10 +93,11 @@ char led_count;
 char but1;
 
 /* NMEA variables */
+char wheel_param_received;
 unsigned short nmea_wd_timeout; /* NMEA watchdog timeout [ms] */
 unsigned short nmea_wd; /* NMEA watchdog counter */
 unsigned short pfbst_interval; /* PFBST interval (20-10000) [ms] */
-short nmea_ticks_l, nmea_ticks_r;
+long nmea_ticks_l, nmea_ticks_r;
 
 /* ADC variables (10 bit [0;1023]) */
 volatile unsigned short adc_data[ADC_NUM]; /* ADC data variables */
@@ -107,8 +111,8 @@ unsigned char battery_low_warning;
 /* wheel variables */
 extern char pid_enable;
 extern short pid_interval; /* 1-1000 [ms] */
-short pid_rate; /* Hz */
-
+extern short pid_rate; /* Hz */
+extern short status_output;
 
 /***************************************************************************/
 void sched_init(void)
@@ -153,7 +157,7 @@ void adc_init (void)
 /***************************************************************************/
 void voltage_update(void)
 {
-	if (spd_set_l == 0 && spd_set_r == 0) /* only test when standing still */
+	if (vel_set_l == 0 && vel_set_r == 0) /* only test when standing still */
 	{
 		if (battery_low_warning == false && voltage < voltage_min)
 			battery_low_warning = true;
@@ -236,9 +240,9 @@ void nmea_rx_parse(void)
 	{
 		nmea_wd = 0; /* reset watchdog timeout */
 		rx_ite = 5; /* jump to first value */
-		spd_set_l = nmea_rx_next_val()/pid_rate;
+		vel_set_l = nmea_rx_next_val();
 		if (rx_ite != -1)
-			spd_set_r = nmea_rx_next_val()/pid_rate;
+			vel_set_r = nmea_rx_next_val();
 	}
 	else if (rx[3] == 'C' && rx[4] == 'P') /* Communication Parameters */
 	{
@@ -256,32 +260,28 @@ void nmea_rx_parse(void)
 	{
 		rx_ite = 5; /* jump to first value */
 		pid_enable = nmea_rx_next_val();
-		if (pid_enable == TRUE)
+		if (pid_enable == 1)
 		{ 
-			long Kp_l, Ki_l, Kd_l, Kp_r, Ki_r, Kd_r;
+			long Kp, Ki, Kd, i_max, feed_fwd;
 			pid_interval = nmea_rx_next_val();
 			pid_rate = 1000/pid_interval; /* always remember after setting pid_interval */
 			if (rx_ite != -1)
 			{
-				Kp_l = nmea_rx_next_val();
+				feed_fwd = nmea_rx_next_val();
 				if (rx_ite != -1)
 				{
-					Ki_l = nmea_rx_next_val();
+					Kp = nmea_rx_next_val();
 					if (rx_ite != -1)
 					{
-						Kd_l = nmea_rx_next_val();
+						Ki = nmea_rx_next_val();
 						if (rx_ite != -1)
 						{
-							Kp_r = nmea_rx_next_val();
+							Kd = nmea_rx_next_val();
 							if (rx_ite != -1)
 							{
-								Ki_r = nmea_rx_next_val();
-								if (rx_ite != -1)
-								{
-									Kd_r = nmea_rx_next_val();
-									motor_set_param (WHEEL_LEFT, pid_interval, Kp_l, Ki_l, Kd_l);
-									motor_set_param (WHEEL_RIGHT, pid_interval, Kp_r, Ki_r, Kd_r);
-								}
+								i_max = nmea_rx_next_val();
+								wheel_param_received = true;
+								motor_set_param (pid_interval, Kp, Ki, Kd, i_max, feed_fwd);
 							}
 						}
 					}
@@ -293,17 +293,32 @@ void nmea_rx_parse(void)
 /***************************************************************************/
 void nmea_tx_status(void)
 {
-	short ticks_l, ticks_r;
+	long tl, tr;
 	tx_len = 7; /* keep the NMEA message prefix */
 
 	nmea_tx_append_ushort (state);
-	ticks_l = nmea_ticks_l;
-	nmea_ticks_l = 0;
-	ticks_r = nmea_ticks_r;
-	nmea_ticks_r = 0;
-	nmea_tx_append_short (ticks_l);
-	nmea_tx_append_short (ticks_r);
+	tl = ticks_l - nmea_ticks_l;
+	nmea_ticks_l = ticks_l;
+	tr = ticks_r - nmea_ticks_r;
+	nmea_ticks_r = ticks_r;
+
+	nmea_tx_append_short (tl);
+	nmea_tx_append_short (tr);
 	nmea_tx_append_ushort (voltage); /* battery voltage [0;1023] */
+	nmea_tx_append_short (pwm_l);
+	nmea_tx_append_short (pwm_r);
+
+	nmea_tx_append_short (pid_l.error);  
+	nmea_tx_append_short (pid_l.output);  
+	nmea_tx_append_short (pid_l.output_p); 
+	nmea_tx_append_short (pid_l.output_i); 
+	nmea_tx_append_short (pid_l.output_d); 
+	nmea_tx_append_short (pid_r.error);  
+	nmea_tx_append_short (pid_r.output);  
+	nmea_tx_append_short (pid_r.output_p);
+	nmea_tx_append_short (pid_r.output_i); 
+	nmea_tx_append_short (pid_r.output_d); 
+
 	tx_len--; /* delete the last comma */
 	nmea_tx();
 }
@@ -311,12 +326,17 @@ void nmea_tx_status(void)
 void state_update(void)
 {
 	if (battery_low_warning == true)
-		state = STATE_LOWBAT;
+		state = STATE_ERR_LOWBAT;
 	else if (nmea_wd > NMEA_WD_TOUT)
-		state = STATE_WATCHDOG; 
+	{
+		state = STATE_ERR_WATCHDOG; 
+		wheel_param_received = false;
+	}
+	else if (wheel_param_received == false)
+		state = STATE_ERR_NO_CONFIG; 
 	else if (nmea_err != 0)
 	{
-		state = STATE_NMEA_ERR;
+		state = STATE_WARN_NMEA_CS;
 		nmea_err = 0;
 	}
 	else
@@ -331,6 +351,12 @@ void sched_update (void)
 	if (t1ms_cnt == 10000)
 		t1ms_cnt = 0;
 	
+
+	if (t1ms_cnt % 20 == 0) /* each 20 ms */
+	{
+		wheel_update_ticks_buffers();
+	}
+
 	if (t1ms_cnt % pid_interval == 0) /* motor controller update */
 	{
 		if (pid_enable)
@@ -380,19 +406,18 @@ int main(void)
 	button_init(); /* initialize button */
 	adc_init(); /* initialize ADC (battery voltage measurement) */
 	serial_init(); /* initialize serial communication */
-	nmea_init(); /* initialize nmea protocol handler */
 	wheel_init(); /* initialize encoders, PWM output, PID etc. */
-
-	pid_interval = 100; /* default PID update interval 100ms */ 
-	pid_rate = 1000/pid_interval; /* always remember after setting pid_interval */
-	pfbst_interval = 100; /* send $PFBST at 100 ms interval */
+	pid_interval = 50; /* default PID update interval 50ms */ 
+	pid_rate = 1000/pid_interval; /* [Hz] always remember after setting pid_interval */
+	pfbst_interval = 20; /* send $PFBST at 20 ms interval */
 	nmea_wd_timeout = 1; /* set PFBCT watchdog timeout to 100ms */
 	nmea_wd = NMEA_WD_TOUT+1; /* make sure we begin in watchdog timeout state */
 	voltage_min = VOLTAGE_MIN_DEFAULT;
 	battery_low_warning = false;
 	state_update();
-
 	sei(); /* enable interrupts */
+	nmea_init(); /* initialize nmea protocol handler */
+
 	for (;;) /* go into an endless loop */
 	{
 		/* motor_update(); */

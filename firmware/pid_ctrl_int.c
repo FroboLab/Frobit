@@ -1,6 +1,6 @@
 /****************************************************************************
 # PID controller
-# Copyright (c) 2007-2013, Kjeld Jensen <kj@kjen.dk>
+# Copyright (c) 2007-2014, Kjeld Jensen <kj@kjen.dk>
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -10,9 +10,9 @@
 #    * Redistributions in binary form must reproduce the above copyright
 #      notice, this list of conditions and the following disclaimer in the
 #      documentation and/or other materials provided with the distribution.
-#    * Neither the name RoboCard nor the
-#      names of its contributors may be used to endorse or promote products
-#      derived from this software without specific prior written permission.
+#    * Neither the name of the copyright holder nor the names of its
+#      contributors may be used to endorse or promote products derived from
+#      this software without specific prior written permission.
 #
 # THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
 # ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
@@ -29,52 +29,45 @@
 # Author: Kjeld Jensen <kj@kjen.dk>
 # Created:  2007-03-21 Kjeld Jensen
 # Modified: 2013-02-12 Kjeld Jensen, updated algorithm, added integer version, added BSD license.
+# Modified: 2013-11-20 KJ, changed (integer) integral integral minimum to - integral maximum
+#                          added (integer) internal state variables for P,I, D output (for debug)
+#                          fixed I and D bug in integer version.
+# Modified: 2014-04-17 Kjeld Jensen, removed floating point version
 ****************************************************************************/
-#include "pid_ctrl.h"
+#include "pid_ctrl_int.h"
 
-
-/***************************************************************************/
-void pid_init (pid_t *pid)
-{
-	pid->error_prev = 0;
-	pid->integral = 0;
-}
-/***************************************************************************/
-void pid_update (pid_t *pid)
-{
-	pid->error = pid->setpoint - pid->measured; /* calc error */
-
-	pid->integral += pid->error * pid->dT; /* integrate error over time */
-	if (pid->integral > pid->integral_max)  /* keep integral within min and max */
-		pid->integral = pid->integral_max;
-	else if (pid->integral < pid->integral_min)
-		pid->integral = pid->integral_min;
-
-	pid->derivative = (pid->error - pid->error_prev)/pid->dT; /* error change */
-
-	pid->output = pid->Kp*pid->error + pid->Ki*pid->integral + pid->Kd*pid->derivative;
-	pid->error_prev  = pid->error; /* save err for next iteration */
-}
 /***************************************************************************/
 void pid_int_init (pid_int_t *pid)
 {
+	pid->error = 0;
 	pid->error_prev = 0;
-	pid->integral = 0;
+	pid->integral_state = 0;
+	pid->output_p = 0;
+	pid->output_i = 0;
+	pid->output_d = 0;
+	pid->output = 0;
 }
 /***************************************************************************/
 void pid_int_update (pid_int_t *pid)
 {
 	pid->error = pid->setpoint - pid->measured; /* calc error */
 
-	pid->integral += pid->error * pid->dT; /* integrate error over time */
-	if (pid->integral > pid->integral_max)  /* keep integral within min and max */
+	pid->integral_state += pid->error * pid->dT; /* integrate error over time */
+
+	pid->integral = pid->integral_state/pid->integral_factor;
+
+	if (pid->integral > pid->integral_max)  /* keep integral within +/- max */
 		pid->integral = pid->integral_max;
-	else if (pid->integral < pid->integral_min)
-		pid->integral = pid->integral_min;
+	else if (pid->integral < -pid->integral_max)
+		pid->integral = -pid->integral_max;
 
-	pid->derivative = (pid->error - pid->error_prev)/pid->dT; /* error change */
+	pid->derivative = (pid->error - pid->error_prev)*pid->derivative_factor/pid->dT; /* error change */
 
-	pid->output = pid->Kp*pid->error + pid->Ki*pid->integral + pid->Kd*pid->derivative; 
+	pid->output_p = pid->Kp*pid->error;
+	pid->output_i = pid->Ki*pid->integral;
+	pid->output_d = pid->Kd*pid->derivative;
+
+	pid->output = pid->output_p + pid->output_i + pid->output_d; 
 
 	pid->error_prev  = pid->error; /* save err for next iteration */
 }
