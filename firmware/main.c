@@ -220,10 +220,12 @@ void nmea_init(void)
 	tx[4] = 'H';
 	tx[5] = 'I';
 	tx[6] = ',';
-	tx[7] = '1';
+	tx[7] = '1'; /* hw version */
 	tx[8] = ',';
-	tx[9] = '1';
-	tx_len = 10;
+	tx[9] = '2'; /* sw version */
+	tx[8] = ',';
+	tx[9] = '0'; /* latest reset type (not yet implemented) */
+	tx_len = 12;
 	nmea_tx();
 
 	tx[4] = 'S'; /* prepare for status messages */
