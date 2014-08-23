@@ -34,6 +34,7 @@
 # Modified: 2012-12-13 Kjeld Jensen, renamed nmea_tx_append() and added nmea_tx_append_ushort()
 # Modified: 2013-02-04 Kjeld Jensen, moved to the BSD license
 # Modified: 2014-04-17 Kjeld Jensen, switched to an updated serial driver
+# Modified: 2014-08-21 Kjeld Jensen, added serial tx of 13,10 after reset
 ****************************************************************************/
 /* includes */
 
@@ -54,6 +55,8 @@ void nmea_reset(void)
 {
 	rx_len = -1; /* wait for next $ */
 	nmea_err = 0; /* reset serial error flag */
+	serial_tx (13);		
+	serial_tx (10);		
 }
 /***************************************************************************/
 static unsigned char hexval (char c)

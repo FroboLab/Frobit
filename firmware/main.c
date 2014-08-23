@@ -33,10 +33,13 @@
 # Created:  2012-08-15
 # Modified: 2013-02-04 Migrated to the BSD license
 # Modified: 2014-04-17 Kjeld Jensen, switched to an updated serial driver
+# Modified: 2014-08-21 Kjeld Jensen, Added support for 15ms watchdog and 
+#                                    reset cause reporting 
 ****************************************************************************/
 /* includes */
-#include <avr/interrupt.h>
 #include <stdlib.h>
+#include <avr/interrupt.h>
+#include <avr/wdt.h>
 #include "rcdef.h"
 #include "wheel.h"
 #include "avr_serial.h"
@@ -84,6 +87,7 @@ volatile unsigned char t1ms;
 unsigned short t1ms_cnt;
 
 /* system variables */
+static unsigned char reset_source; /* 0=pow,1=ext,2=brownout,3=wd,4=jtag */
 char state;
 
 /* user interface variables*/
@@ -226,7 +230,7 @@ void nmea_init(void)
 	tx[10] = ',';
 	tx[11] = '1'; /* sw minor version */
 	tx[12] = ',';
-	tx[13] = '0'; /* latest reset type (not yet implemented) */
+	tx[13] = '0' + reset_source; /* latest reset type */
 	tx_len = 14;
 	nmea_tx();
 
@@ -377,6 +381,8 @@ void sched_update (void)
 	/* each 10 ms */
 	if (t1ms_cnt % 10 == 0) /* each 10 ms */
 	{
+		wdt_reset(); /* reset watchdog */
+
 		if (t1ms_cnt % 20 == 0) /* each 20 ms */
 		{
 		}
@@ -403,8 +409,28 @@ void sched_update (void)
 	}
 }
 /***************************************************************************/
+void save_reset_source(void)
+{
+	char reset_reg = MCUSR; /* save the source of the latest reset */
+	MCUSR = 0;
+	switch (reset_reg) 
+	{
+		case 1: /* power on */
+			reset_source = 0; break;
+		case 2: /* reset activated */
+			reset_source = 1; break;
+		case 4: /* brown out */
+			reset_source = 2; break;
+		case 8: /* watchdog */
+			reset_source = 3; break;
+		case 16: /* jtag */
+			reset_source = 4; break;
+	}
+}
+/***************************************************************************/
 int main(void)
 {
+	save_reset_source(); /* determine the cause of the startup */
 	sched_init(); /* initialize the scheduler */
 	led_init(); /* initialize led */
 	button_init(); /* initialize button */
@@ -420,7 +446,8 @@ int main(void)
 	battery_low_warning = false;
 	state_update();
 	sei(); /* enable interrupts */
-	nmea_init(); /* initialize nmea protocol handler */
+	nmea_init(); /* initialize nmea protocol handler (after sei) */
+	wdt_enable (WDTO_15MS); /* enable watchdog reset at approx 15 ms */
 
 	for (;;) /* go into an endless loop */
 	{
